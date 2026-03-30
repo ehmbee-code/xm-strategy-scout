@@ -1,67 +1,59 @@
 import streamlit as st
-from openai import OpenAI
-from tavily import TavilyClient
+import google.generativeai as genai
 
 # --- UI Setup ---
 st.set_page_config(page_title="XM Strategy Scout", page_icon="🎯", layout="wide")
 st.title("🎯 XM Strategy Scout")
-st.markdown("Identify C-Suite Experience Gaps & Executive Stakeholders")
+st.markdown("Powered by Google Gemini & Google Search")
 
-with st.sidebar:
-    st.header("Authentication")
-    openai_key = st.text_input("OpenAI API Key", type="password")
-    tavily_key = st.text_input("Tavily API Key", type="password")
-    st.info("This tool uses AI to research 10-Ks and earnings transcripts.")
+# Check for secret
+if "GEMINI_API_KEY" in st.secrets:
+    gemini_key = st.secrets["GEMINI_API_KEY"]
+else:
+    st.error("Missing GEMINI_API_KEY in Streamlit Secrets!")
+    st.stop()
+
+# Configure Gemini with Google Search tool
+genai.configure(api_key=gemini_key)
+
+# We use the 'google_search' tool to let Gemini browse the live web
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    tools=[{"google_search_retrieval": {}}] 
+)
 
 company_name = st.text_input("Enter Company Name:", placeholder="e.g. Delta Airlines")
 
 if st.button("Generate Strategy Report"):
-    if not openai_key or not tavily_key:
-        st.warning("Please enter your API keys in the sidebar.")
-    else:
-        with st.spinner(f"Agent is researching {company_name}..."):
-            try:
-                # Initialize Clients
-                client = OpenAI(api_key=openai_key)
-                tavily = TavilyClient(api_key=tavily_key)
+    with st.spinner(f"Searching Google for {company_name} insights..."):
+        try:
+            # The comprehensive prompt that handles search + analysis + executive lookup
+            prompt = f"""
+            Perform a search for the company '{company_name}' and provide a strategic report based on the following:
 
-                # 1. THE SEARCH: Get raw data from the web
-                search_query = f"{company_name} latest 10-K annual report earnings transcript experience management customer employee experience"
-                search_result = tavily.search(query=search_query, search_depth="advanced", max_results=5)
-                
-                # 2. THE SEARCH: Get Executives
-                exec_query = f"list of C-suite and VP executives at {company_name} LinkedIn"
-                exec_result = tavily.search(query=exec_query, search_depth="advanced", max_results=3)
+            1. FIND DATA: Search for their most recent 10-K (Annual Report), latest quarterly earnings transcript, and news from the last 6 months.
+            
+            2. APPLY EXPERIENCE MANAGEMENT FILTER: 
+               - Identify exactly TWO major C-Level business problems. 
+               - IGNORE purely operational issues (supply chain, raw material costs, inflation). 
+               - FOCUS ONLY ON: Customer Experience (churn, digital adoption, NPS), Employee Experience (attrition, productivity, talent), or Market/Product Innovation (brand perception).
+            
+            3. EXECUTIVE MAPPING: Search for and identify 10-15 current C-Suite and VP/Director level executives at {company_name}.
+            
+            FORMAT:
+            - Provide a 'Strategic Overview' section.
+            - Provide a 'Top 2 C-Level Priorities' section with 3-4 sentences of explanation for each.
+            - Provide a Markdown Table for the executives including: Name, Title, and Department.
+            - Use a professional consultant's tone.
+            """
 
-                # 3. THE ANALYSIS: Pass data to OpenAI
-                context = f"Search Results for XM: {search_result}\n\nSearch Results for Execs: {exec_result}"
-                
-                prompt = f"""
-                You are a Strategic Business Analyst. Based on the provided context about {company_name}, create a report.
-                
-                1. Identify exactly TWO major C-Level business problems using an 'Experience Management' filter. 
-                   - Ignore logistics, supply chain, or interest rates. 
-                   - Focus on: Customer Experience (churn, digital friction) OR Employee Experience (turnover, productivity) OR Innovation (brand perception).
-                
-                2. List 10-15 key C-Suite and VP/Director level executives at {company_name}.
-                
-                Format:
-                - Use a professional 'Executive Summary' tone.
-                - Use a Table for the executives (Name, Title).
-                - Use Bold headers.
-                """
+            # Run the request
+            response = model.generate_content(prompt)
 
-                response = client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful business research assistant."},
-                        {"role": "user", "content": f"Context: {context}\n\nTask: {prompt}"}
-                    ]
-                )
+            # Display the result
+            st.markdown("---")
+            st.markdown(response.text)
 
-                # 4. OUTPUT
-                st.markdown("---")
-                st.markdown(response.choices[0].message.content)
-
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+        except Exception as e:
+            st.error(f"Something went wrong: {e}")
+            st.info("Check if your Gemini API key has 'Google Search' permissions enabled in AI Studio.")
