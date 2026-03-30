@@ -1,8 +1,10 @@
 import streamlit as st
-from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent, AgentType
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain.agents import create_openai_functions_agent, AgentExecutor
+from langchain import hub
 
+# --- UI Setup ---
 st.set_page_config(page_title="XM Strategy Scout", layout="wide")
 st.title("🎯 XM Strategy Scout")
 
@@ -10,33 +12,50 @@ with st.sidebar:
     st.header("1. Authentication")
     openai_key = st.text_input("OpenAI API Key", type="password")
     tavily_key = st.text_input("Tavily API Key", type="password")
-    st.markdown("---")
-    st.write("This tool researches 10-Ks and Transcripts to find Customer and Employee experience gaps.")
+    st.info("Get a Tavily key at tavily.com and OpenAI key at platform.openai.com")
 
 company_name = st.text_input("2. Enter Company Name:", placeholder="e.g. Delta Airlines")
 
 if st.button("Generate Strategy Report"):
     if not openai_key or not tavily_key:
-        st.warning("Please enter your API keys in the sidebar.")
+        st.warning("Please enter both API keys in the sidebar.")
     else:
-        with st.spinner(f"Analyzing {company_name}... (may take 60s)"):
+        with st.spinner(f"Researching {company_name}..."):
             try:
-                llm = ChatOpenAI(model="gpt-4-turbo-preview", openai_api_key=openai_key, temperature=0)
+                # 1. Setup Tools and LLM
+                llm = ChatOpenAI(model="gpt-4-turbo-preview", api_key=openai_key, temperature=0)
                 search = TavilySearchResults(tavily_api_key=tavily_key)
+                tools = [search]
+
+                # 2. Get the prompt template from LangChain Hub
+                prompt = hub.pull("hwchase17/openai-functions-agent")
+
+                # 3. Construct the Agent
+                agent = create_openai_functions_agent(llm, tools, prompt)
+                agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+                # 4. The Specific XM Instruction
+                task = f"""
+                Research {company_name} and provide a report.
                 
-                agent = initialize_agent([search], llm, agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION)
+                PHASE 1: FIND DATA
+                Search for the most recent 10-K (Annual Report) and the latest quarterly earnings transcript.
                 
-                query = f"""
-                Research {company_name}. 
-                1. Find their latest 10-K and most recent earnings call transcript.
-                2. Identify TWO major C-level business problems regarding Customer Experience, Employee Experience, or Market Innovation.
-                3. Ignore purely operational issues like fuel costs or supply chain.
-                4. List 10 specific C-Suite and VP-level executives.
-                Format as a clean executive summary with a table for executives.
+                PHASE 2: ANALYZE XM GAPS
+                Identify exactly TWO major C-Level business problems. 
+                Use an 'Experience Management' filter: ignore logistics/supply chain. 
+                Focus on: Customer Experience (churn, digital adoption) OR Employee Experience (attrition, productivity) OR Innovation (brand perception).
+                
+                PHASE 3: EXECUTIVES
+                Identify 10-15 C-Suite and VP-level executives at {company_name} with their titles.
+                
+                FORMAT: Present as a professional Executive Summary with a Table for the executives.
                 """
-                
-                response = agent.run(query)
-                st.markdown(response)
+
+                # 5. Run
+                response = agent_executor.invoke({{"input": task}})
+                st.markdown("---")
+                st.markdown(response["output"])
                 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"An error occurred: {{e}}")
